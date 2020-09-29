@@ -13,6 +13,7 @@ spec:
   template:
     metadata:
       labels:
+        service: carts
         app: carts
         version: v1
     spec:
