@@ -1,4 +1,7 @@
-@Library('dynatrace@master') _
+@Library('dynatrace@master')
+@Library('keptn-library@master')
+import sh.keptn.Keptn
+def keptn = new sh.keptn.Keptn()
 
 def tagMatchRules = [
   [
@@ -6,8 +9,8 @@ def tagMatchRules = [
       [meType: 'SERVICE']
     ],
     tags : [
-      [context: 'CONTEXTLESS', key: 'app', value: 'carts'],
-      [context: 'CONTEXTLESS', key: 'environment', value: 'dev']
+      [context: 'CONTEXTLESS', key: 'app', value: KEPTN_SERVICE],
+      [context: 'CONTEXTLESS', key: 'environment', value: KEPTN_STAGE]
     ]
   ]
 ]
@@ -16,14 +19,49 @@ pipeline {
   agent {
     label 'git'
   }
+
+  parameters {
+    string(name: 'KEPTN_PROJECT', defaultValue: 'sockshop', description: 'The name of the application.', trim: true)
+    string(name: 'KEPTN_SERVICE', defaultValue: 'carts', description: 'The name of the service', trim: true)
+    string(name: 'KEPTN_STAGE', defaultValue: 'dev', description: 'The name of the environment.', trim: true)
+    string(name: 'KEPTN_MONITORING', defaultValue: 'dynatrace', description: 'Name of monitoring provider.', trim: true)
+    string(name: 'KEPTN_DIR', defaultValue: 'keptn/', description: 'keptn shipyard file location', trim: true)
+    integer(name: 'JMETER_VUCOUNT', defaultValue: 5, description: 'Number of virtual users', trim: true)
+    integer(name: 'JMETER_LOOPCOUNT', defaultValue: 500, description: 'Number of loops', trim: true))
+  }
+
   environment {
     APP_NAME = "carts"
+    KEPTN_SHIPYARD = "${KEPTN_DIR}${KEPTN_SERVICE}-shipyard.yaml"
+    KEPTN_SLI = "${KEPTN_DIR}${KEPTN_SERVICE}-sli.yaml"
+    KEPTN_SLO = "${KEPTN_DIR}${KEPTN_SERVICE}-slo.yaml"
+    KEPTN_DT_CONF = "${KEPTN_DIR}${KEPTN_MONITORING}.conf.yaml"
   }
+
   stages {
+
+    stage ('Checkout') {
+      steps{
+        script{
+          println '**********************************************************************'
+          checkout scm
+        }
+      }
+    }
+
+    stage('Keptn Init') {
+      steps{
+        script {
+          keptn.keptnInit project:"${KEPTN_PROJECT}", service:"${KEPTN_SERVICE}", stage:"${KEPTN_STAGE}", monitoring:"${KEPTN_MONITORING}", shipyard: "${KEPTN_SHIPYARD}"
+          keptn.keptnAddResources("${KEPTN_SLI}",'dynatrace/sli.yaml')
+          keptn.keptnAddResources("${KEPTN_SLO}",'slo.yaml')
+          keptn.keptnAddResources("${KEPTN_DT_CONF}",'dynatrace/dynatrace.conf.yaml')          
+        }
+      }
+    } // end stage
+
     stage('Warm up') {
       steps {
-        checkout scm
-
         container('jmeter') {
           script {
             def status = executeJMeter ( 
@@ -44,51 +82,49 @@ pipeline {
             }
           }
         }
-        
-        echo "Waiting for a minute to not skew data in DT"
-        sleep(60)
       }
-    }
+    } // end stage
 
-    stage('Performance Check') {
+    stage('Run Performance Test') {
       steps {
-        recordDynatraceSession(
-          envId: 'Dynatrace Tenant',
-          testCase: 'loadtest',
-          tagMatchRules: tagMatchRules
-        ) 
-        {
-          container('jmeter') {
-            script {
-              def status = executeJMeter ( 
-                scriptName: "jmeter/${env.APP_NAME}_perfcheck.jmx",
-                resultsDir: "PerfCheck_${env.APP_NAME}_${env.VERSION}_${BUILD_NUMBER}",
-                serverUrl: "${env.APP_NAME}.dev", 
-                serverPort: 80,
-                checkPath: '/health',
-                vuCount: 5,
-                loopCount: 500,
-                LTN: "PerfCheck_${BUILD_NUMBER}",
-                funcValidation: false,
-                avgRtValidation: 4000
-              )
-              if (status != 0) {
-                currentBuild.result = 'FAILED'
-                error "Performance check failed."
-              }
+        script {
+            keptn.markEvaluationStartTime()
+        }
+        container('jmeter') {
+          script {
+            def status = executeJMeter ( 
+              scriptName: "jmeter/${env.APP_NAME}_perfcheck.jmx",
+              resultsDir: "PerfCheck_${env.APP_NAME}_${env.VERSION}_${BUILD_NUMBER}",
+              serverUrl: "${env.APP_NAME}.dev", 
+              serverPort: 80,
+              checkPath: '/health',
+              vuCount: JMETER_LOOPCOUNT,
+              loopCount: JMETER_VUCOUNT,
+              LTN: "PerfCheck_${BUILD_NUMBER}",
+              funcValidation: false,
+              avgRtValidation: 4000
+            )
+            if (status != 0) {
+              currentBuild.result = 'FAILED'
+              error "Performance check failed."
             }
           }
         }
+        script {
+          def keptnContext = keptn.sendStartEvaluationEvent starttime:"", endtime:"" 
+          echo "Open Keptns Bridge: ${keptn_bridge}/trace/${keptnContext}"
+        }
+      } 
+    } // end stage
 
-        echo "Waiting for a minute so data can be processed in Dynatrace"
-        sleep(60)
-
-        perfSigDynatraceReports(
-          envId: 'Dynatrace Tenant', 
-          nonFunctionalFailure: 1, 
-          specFile: "monspec/${env.APP_NAME}_perfsig.json"
-        ) 
+    stage('Pipeline Quality Gate') {
+      steps {
+        script {
+          def result = keptn.waitForEvaluationDoneEvent setBuildResult:true, waitTime:'5'
+          echo "${result}"
+        }
       }
-    }
-  }
-}
+    } // end stage
+
+  } // end stages
+} // end pipeline
