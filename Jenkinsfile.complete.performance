@@ -26,8 +26,8 @@ pipeline {
     string(name: 'KEPTN_STAGE', defaultValue: 'dev', description: 'The name of the environment.', trim: true)
     string(name: 'KEPTN_MONITORING', defaultValue: 'dynatrace', description: 'Name of monitoring provider.', trim: true)
     string(name: 'KEPTN_DIR', defaultValue: 'keptn/', description: 'keptn shipyard file location', trim: true)
-    string(name: 'JMETER_VUCOUNT', defaultValue: 5, description: 'Number of virtual users', trim: true)
-    string(name: 'JMETER_LOOPCOUNT', defaultValue: 500, description: 'Number of loops', trim: true))
+    string(name: 'JMETER_VUCOUNT', defaultValue: '5', description: 'Number of virtual users', trim: true)
+    string(name: 'JMETER_LOOPCOUNT', defaultValue: '500', description: 'Number of loops', trim: true)
   }
 
   environment {
@@ -67,7 +67,7 @@ pipeline {
             def status = executeJMeter ( 
               scriptName: "jmeter/${env.APP_NAME}_perfcheck.jmx",
               resultsDir: "PerfCheck_Warmup_${env.APP_NAME}_${env.VERSION}_${BUILD_NUMBER}",
-              serverUrl: "${env.APP_NAME}.dev", 
+              serverUrl: "${env.APP_NAME}.${env.KEPTN_STAGE}",  
               serverPort: 80,
               checkPath: '/health',
               vuCount: 1,
@@ -95,7 +95,7 @@ pipeline {
             def status = executeJMeter ( 
               scriptName: "jmeter/${env.APP_NAME}_perfcheck.jmx",
               resultsDir: "PerfCheck_${env.APP_NAME}_${env.VERSION}_${BUILD_NUMBER}",
-              serverUrl: "${env.APP_NAME}.dev", 
+              serverUrl: "${env.APP_NAME}.${env.KEPTN_STAGE}", 
               serverPort: 80,
               checkPath: '/health',
               vuCount: JMETER_VUCOUNT.toInteger(),
